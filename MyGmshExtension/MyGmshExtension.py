@@ -300,7 +300,16 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             outputDirectory = self.ui.outputDirectorySelector.directory
             if not inputModel or not outputDirectory:
                 raise ValueError("Input model or output directory is invalid")
-            self.logic.process(inputModel, outputDirectory)
+            meshedModelNode = self.logic.process(inputModel, outputDirectory)
+        
+            if meshedModelNode:
+                slicer.util.setSliceViewerLayers(background=None)
+                slicer.util.resetSliceViews()
+                slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUp3DView)
+                slicer.util.resetThreeDViews()
+                
+                # Set the meshed model to be visible
+                meshedModelNode.GetDisplayNode().SetVisibility(True)
 
         #self.ui.applyButton.enabled = True
         #convolutionKernel = self.logic.convolutionKernelFromVolumeNode(inputVolume)
@@ -363,9 +372,9 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         if not inputModel.IsA("vtkMRMLModelNode"):
             raise ValueError("Input must be a surface model (vtkMRMLModelNode)")
         
-        polyData = inputModel.GetPolyData()
-        if not polyData or polyData.GetNumberOfPoints() == 0:
-            raise ValueError("Input model does not contain valid geometry")
+        # polyData = inputModel.GetPolyData()
+        # if not polyData or polyData.GetNumberOfPoints() == 0:
+        #     raise ValueError("Input model does not contain valid geometry")
 
         os.makedirs(outputDirectory, exist_ok=True)
 
@@ -395,6 +404,16 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
             print("First few lines of VTK file:")
             print(f.read(500))
 
+        output_vtk_file = self.generateMesh(exportVtkPath, outputDirectory)
+
+        # Load the generated VTK file back into Slicer
+        loadedModelNode = slicer.util.loadModel(output_vtk_file)
+        if loadedModelNode:
+            print(f"Loaded meshed model: {loadedModelNode.GetName()}")
+            # Optionally, you can set a custom name for the loaded model
+            loadedModelNode.SetName("Meshed_Model")
+        else:
+            print("Failed to load the meshed model")
 
         # print(f"VTK file created: {tempVtkPath}")
         # print(f"VTK file size: {os.path.getsize(tempVtkPath)} bytes")
@@ -405,7 +424,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         #     print(f.read(500))
 
         # Generate mesh
-        self.generateMesh(exportVtkPath, outputDirectory)
+        #self.generateMesh(exportVtkPath, outputDirectory)
 
         # Clean up temporary file
         #os.remove(tempVtkPath)
@@ -416,19 +435,15 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
 
         base_name = os.path.splitext(os.path.basename(vtkFilePath))[0]
         geo_file = os.path.join(outputDirectory, base_name + '.geo')
-        msh_file = os.path.join(outputDirectory, base_name + '.msh')
+        output_vtk_file = os.path.join(outputDirectory, base_name + '_meshed.vtk')
 
         print(f"GEO file: {geo_file}")
-        print(f"MSH file: {msh_file}")
+        print(f"Output VTK file: {output_vtk_file}")
 
         self.create_geo_file(vtkFilePath, geo_file, element_size=1.0)
-        self.generate_mesh_with_gmsh(geo_file, msh_file)
+        self.generate_mesh_with_gmsh(geo_file, output_vtk_file)
 
-        if os.path.exists(msh_file):
-            print(f"MSH file created successfully: {msh_file}")
-            print(f"MSH file size: {os.path.getsize(msh_file)} bytes")
-        else:
-            print(f"Failed to create MSH file: {msh_file}")
+        return output_vtk_file
 
     def create_geo_file(self, vtk_file_name, geo_file, element_size=1.0):
         """
@@ -456,7 +471,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
     def getParameterNode(self):
         return ScriptedLoadableModuleLogic.getParameterNode(self)
 
-    def generate_mesh_with_gmsh(self, geo_file, msh_file):
+    def generate_mesh_with_gmsh(self, geo_file, output_file):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         gmsh_script = os.path.join(current_dir, "gmsh")
         
@@ -466,7 +481,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         print(f"GMSH script path: {gmsh_script}")
         print(f"Python executable: {python_executable}")
         print(f"GEO file path: {geo_file}")
-        print(f"MSH file path: {msh_file}")
+        print(f"MSH file path: {output_file}")
 
         try:
             result = subprocess.run([
@@ -475,8 +490,8 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
                 '-3',  # 3D mesh
                 '-order', '2',  # Second order elements
                 '-optimize_netgen',  # Optimize the mesh
-                '-format', 'msh2', 
-                '-o', msh_file
+                '-format', 'vtk', 
+                '-o', output_file
             ], check=True, capture_output=True, text=True,
             env=dict(os.environ, PYTHONPATH=current_dir))
             print("GMSH stdout:")
@@ -491,6 +506,12 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
             raise
+
+        if os.path.exists(output_file):
+            print(f"Output file created successfully: {output_file}")
+            print(f"Output file size: {os.path.getsize(output_file)} bytes")
+        else:
+            print(f"Failed to create output file: {output_file}")
 
 #
 # MyGmshExtensionTest
