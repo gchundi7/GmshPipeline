@@ -262,7 +262,7 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         #self.ui.outputSegmentationSelector.setCurrentNode(self._parameterNode.GetNodeReference("OutputSegmentation"))
 
         # Update buttons states and tooltips
-        if self._parameterNode.GetNodeReference("InputVolume"):
+        if self._parameterNode.GetNodeReference("InputModel") and self._parameterNode.GetParameter("OutputDirectory"):
             self.ui.applyButton.toolTip = "Compute mesh"
             self.ui.applyButton.enabled = True
         else:
