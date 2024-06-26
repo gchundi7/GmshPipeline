@@ -411,7 +411,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         if loadedModelNode:
             print(f"Loaded meshed model: {loadedModelNode.GetName()}")
             # Optionally, you can set a custom name for the loaded model
-            loadedModelNode.SetName("Meshed_Model")
+            #loadedModelNode.SetName("Meshed_Model")
         else:
             print("Failed to load the meshed model")
 
@@ -456,12 +456,17 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         """
         # Open the GEO file for writing
         with open(geo_file, 'w') as file:
-            file.write(f'SetFactory("OpenCASCADE");\n')
+            #file.write(f'SetFactory("OpenCASCADE");\n')
+            # Merge the VTK file into the GEO file
             file.write(f'Merge "{vtk_file_name}";\n')
-            file.write('Surface Loop(1) = Surface{:};\n')
-            file.write('Volume(1) = {1};\n')
-            file.write(f'Characteristic Length {{:}} = {element_size};\n')
-            file.write('Physical Volume("MyVolume") = {1};\n')
+            # Create a surface loop with ID 1
+            file.write("Surface Loop(1) = {1};\n")
+            # Create a volume with ID 1 based on the surface loop
+            file.write("Volume(1) = {1};\n")
+            # Set the characteristic length (element size) for the points in the volume
+            file.write(f'Characteristic Length {{ PointsOf {{ Volume {{1}} }} }} = {element_size};\n')
+            # Assign the volume a physical name "myVolume"
+            file.write('Physical Volume("myVolume") = {1};\n')
         
         print(f"GEO file created: {geo_file}")
         with open(geo_file, 'r') as file:
