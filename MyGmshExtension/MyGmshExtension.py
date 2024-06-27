@@ -199,11 +199,12 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     def exit(self) -> None:
         """Called each time the user opens a different module."""
+        self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
         # Do not react to parameter node changes (GUI will be updated when the user enters into the module)
-        if self._parameterNode:
-            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self._parameterNodeGuiTag = None
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
+        # if self._parameterNode:
+        #     self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
+        #     self._parameterNodeGuiTag = None
+        #     self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
 
     def onSceneStartClose(self, caller, event) -> None:
         """Called just before the scene is closed."""
@@ -261,7 +262,7 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Update node selectors and sliders
         self.ui.inputVolumeSelector.setCurrentNode(self._parameterNode.GetNodeReference("InputModel"))
         self.ui.outputDirectorySelector.directory = self._parameterNode.GetParameter("OutputDirectory")
-        self.ui.elementSizeSpinBox.value = float(self._parameterNode.GetParameter("ElementSize") or 1.0)
+        self.ui.elementSizeSpinBox.value = float(self._parameterNode.GetParameter("ElementSize"))
         self.ui.optimizeNetgenCheckBox.checked = self._parameterNode.GetParameter("OptimizeNetgen") == "true"
         #self.ui.inputSeedSelector.setCurrentNode(self._parameterNode.GetNodeReference("InputSeed"))
         #self.ui.outputSegmentationSelector.setCurrentNode(self._parameterNode.GetNodeReference("OutputSegmentation"))
