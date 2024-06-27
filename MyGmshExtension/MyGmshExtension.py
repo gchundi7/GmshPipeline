@@ -107,24 +107,26 @@ and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR0132
 #
 
 
-@parameterNodeWrapper
-class MyGmshExtensionParameterNode:
-    """
-    The parameters needed by module.
+# @parameterNodeWrapper
+# class MyGmshExtensionParameterNode:
+#     """
+#     The parameters needed by module.
 
-    inputVolume - The volume to threshold.
-    imageThreshold - The value at which to threshold the input volume.
-    invertThreshold - If true, will invert the threshold.
-    thresholdedVolume - The output volume that will contain the thresholded volume.
-    invertedVolume - The output volume that will contain the inverted thresholded volume.
-    """
+#     inputVolume - The volume to threshold.
+#     imageThreshold - The value at which to threshold the input volume.
+#     invertThreshold - If true, will invert the threshold.
+#     thresholdedVolume - The output volume that will contain the thresholded volume.
+#     invertedVolume - The output volume that will contain the inverted thresholded volume.
+#     """
 
-    inputModel: slicer.vtkMRMLModelNode
-    #inputVolume: vtkMRMLScalarVolumeNode
-    imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
-    invertThreshold: bool = False
-    thresholdedVolume: vtkMRMLScalarVolumeNode
-    invertedVolume: vtkMRMLScalarVolumeNode
+#     inputModel: slicer.vtkMRMLModelNode
+#     #inputVolume: vtkMRMLScalarVolumeNode
+#     imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
+#     invertThreshold: bool = False
+#     thresholdedVolume: vtkMRMLScalarVolumeNode
+#     invertedVolume: vtkMRMLScalarVolumeNode
+#     elementSize: float = 1.0
+#     optimizeNetgen: bool = True
 
 
 #
@@ -178,7 +180,8 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self.ui.inputVolumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateParameterNodeFromGUI)
         self.ui.outputDirectorySelector.connect("directoryChanged(QString)", self.updateParameterNodeFromGUI)
-
+        self.ui.elementSizeSpinBox.connect("valueChanged(double)", self.updateParameterNodeFromGUI)
+        self.ui.optimizeNetgenCheckBox.connect("toggled(bool)", self.updateParameterNodeFromGUI)
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
 
@@ -258,6 +261,8 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Update node selectors and sliders
         self.ui.inputVolumeSelector.setCurrentNode(self._parameterNode.GetNodeReference("InputModel"))
         self.ui.outputDirectorySelector.directory = self._parameterNode.GetParameter("OutputDirectory")
+        self.ui.elementSizeSpinBox.value = float(self._parameterNode.GetParameter("ElementSize") or 1.0)
+        self.ui.optimizeNetgenCheckBox.checked = self._parameterNode.GetParameter("OptimizeNetgen") == "true"
         #self.ui.inputSeedSelector.setCurrentNode(self._parameterNode.GetNodeReference("InputSeed"))
         #self.ui.outputSegmentationSelector.setCurrentNode(self._parameterNode.GetNodeReference("OutputSegmentation"))
 
@@ -285,6 +290,8 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self._parameterNode.SetNodeReferenceID("InputModel", self.ui.inputVolumeSelector.currentNodeID)
         self._parameterNode.SetParameter("OutputDirectory", self.ui.outputDirectorySelector.directory)
+        self._parameterNode.SetParameter("ElementSize", str(self.ui.elementSizeSpinBox.value))
+        self._parameterNode.SetParameter("OptimizeNetgen", "true" if self.ui.optimizeNetgenCheckBox.checked else "false") ###
         self._parameterNode.EndModify(wasModified)
         #self._parameterNode.SetNodeReferenceID("InputSeed", self.ui.inputSeedSelector.currentNodeID)
         #self._parameterNode.SetNodeReferenceID("OutputVolume", self.ui.outputSegmentationSelector.currentNodeID)
@@ -298,9 +305,11 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         with slicer.util.tryWithErrorDisplay("Failed to compute results.", waitCursor=True):
             inputModel = self.ui.inputVolumeSelector.currentNode()
             outputDirectory = self.ui.outputDirectorySelector.directory
+            elementSize = self.ui.elementSizeSpinBox.value
+            optimizeNetgen = self.ui.optimizeNetgenCheckBox.checked
             if not inputModel or not outputDirectory:
                 raise ValueError("Input model or output directory is invalid")
-            meshedModelNode = self.logic.process(inputModel, outputDirectory)
+            meshedModelNode = self.logic.process(inputModel, outputDirectory, elementSize, optimizeNetgen)
         
             if meshedModelNode:
                 slicer.util.setSliceViewerLayers(background=None)
@@ -365,7 +374,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
     #     if not parameterNode.GetParameter("ElementSize"):
     #         parameterNode.SetParameter("ElementSize", "1.0")
 
-    def process(self, inputModel, outputDirectory):
+    def process(self, inputModel, outputDirectory, elementSize, optimizeNetgen):
         if not inputModel or not outputDirectory:
             raise ValueError("Input model or output path is invalid")
         
@@ -404,14 +413,14 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
             print("First few lines of VTK file:")
             print(f.read(500))
 
-        output_vtk_file = self.generateMesh(exportVtkPath, outputDirectory)
+        output_vtk_file = self.generateMesh(exportVtkPath, outputDirectory, elementSize, optimizeNetgen)
 
         # Load the generated VTK file back into Slicer
         loadedModelNode = slicer.util.loadModel(output_vtk_file)
         if loadedModelNode:
             print(f"Loaded meshed model: {loadedModelNode.GetName()}")
             # Optionally, you can set a custom name for the loaded model
-            #loadedModelNode.SetName("Meshed_Model")
+            loadedModelNode.SetName("Meshed_Model")
         else:
             print("Failed to load the meshed model")
 
@@ -429,7 +438,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         # Clean up temporary file
         #os.remove(tempVtkPath)
 
-    def generateMesh(self, vtkFilePath, outputDirectory):
+    def generateMesh(self, vtkFilePath, outputDirectory, elementSize, optimizeNetgen):
         print(f"Input VTK file: {vtkFilePath}")
         print(f"Output directory: {outputDirectory}")
 
@@ -440,12 +449,12 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         print(f"GEO file: {geo_file}")
         print(f"Output VTK file: {output_vtk_file}")
 
-        self.create_geo_file(vtkFilePath, geo_file, element_size=1.0)
-        self.generate_mesh_with_gmsh(geo_file, output_vtk_file)
+        self.create_geo_file(vtkFilePath, geo_file, element_size=elementSize)
+        self.generate_mesh_with_gmsh(geo_file, output_vtk_file, elementSize, optimizeNetgen)
 
         return output_vtk_file
 
-    def create_geo_file(self, vtk_file_name, geo_file, element_size=1.0):
+    def create_geo_file(self, vtk_file_name, geo_file, element_size):
         """
         Create a GEO file for GMSH from a VTK file.
 
@@ -476,7 +485,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
     def getParameterNode(self):
         return ScriptedLoadableModuleLogic.getParameterNode(self)
 
-    def generate_mesh_with_gmsh(self, geo_file, output_file):
+    def generate_mesh_with_gmsh(self, geo_file, output_file, elementSize, optimizeNetgen):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         gmsh_script = os.path.join(current_dir, "gmsh")
         
@@ -488,17 +497,22 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         print(f"GEO file path: {geo_file}")
         print(f"MSH file path: {output_file}")
 
+        gmsh_command = [
+            python_executable, gmsh_script, 
+            geo_file, 
+            '-3',  # 3D mesh
+            '-order', '2',  # Second order elements
+            f'-clmax', str(elementSize),  # Set element size
+            '-format', 'vtk', 
+            '-o', output_file
+        ]
+        
+        if optimizeNetgen:
+            gmsh_command.append('-optimize_netgen')
+
         try:
-            result = subprocess.run([
-                python_executable, gmsh_script, 
-                geo_file, 
-                '-3',  # 3D mesh
-                '-order', '2',  # Second order elements
-                '-optimize_netgen',  # Optimize the mesh
-                '-format', 'vtk', 
-                '-o', output_file
-            ], check=True, capture_output=True, text=True,
-            env=dict(os.environ, PYTHONPATH=current_dir))
+            result = subprocess.run(gmsh_command, check=True, capture_output=True, text=True,
+                                    env=dict(os.environ, PYTHONPATH=current_dir))
             print("GMSH stdout:")
             print(result.stdout)
         except subprocess.CalledProcessError as e:
