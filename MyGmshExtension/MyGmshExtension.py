@@ -182,11 +182,19 @@ class MyGmshExtensionWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.outputDirectorySelector.connect("directoryChanged(QString)", self.updateParameterNodeFromGUI)
         self.ui.elementSizeSpinBox.connect("valueChanged(double)", self.updateParameterNodeFromGUI)
         self.ui.optimizeNetgenCheckBox.connect("toggled(bool)", self.updateParameterNodeFromGUI)
+        self.ui.enableClippingCheckBox.connect("toggled(bool)", self.onClippingToggled)
+
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+
+    def onClippingToggled(self, checked):
+        if self.logic.outputMeshNode:
+            displayNode = self.logic.outputMeshNode.GetDisplayNode()
+            if displayNode:
+                displayNode.SetClipping(checked)
 
     def cleanup(self) -> None:
         """Called when the application closes and the module widget is destroyed."""
@@ -370,6 +378,7 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
     def __init__(self) -> None:
         """Called when the logic class is instantiated. Can be used for initializing member variables."""
         ScriptedLoadableModuleLogic.__init__(self)
+        self.outputMeshNode = None
 
     # def setDefaultParameters(self, parameterNode):
     #     if not parameterNode.GetParameter("ElementSize"):
@@ -417,13 +426,87 @@ class MyGmshExtensionLogic(ScriptedLoadableModuleLogic):
         output_vtk_file = self.generateMesh(exportVtkPath, outputDirectory, elementSize, optimizeNetgen)
 
         # Load the generated VTK file back into Slicer
-        loadedModelNode = slicer.util.loadModel(output_vtk_file)
-        if loadedModelNode:
-            print(f"Loaded meshed model: {loadedModelNode.GetName()}")
+        #loadedModelNode = slicer.util.loadModel(output_vtk_file)
+        outputMeshNode = self.loadMeshIntoSlicer(output_vtk_file)
+        if outputMeshNode:
+            print(f"Loaded meshed model: {outputMeshNode.GetName()}")
             # Optionally, you can set a custom name for the loaded model
-            loadedModelNode.SetName("Meshed_Model")
+            outputMeshNode.SetName("Meshed_Model")
+            return outputMeshNode
         else:
             print("Failed to load the meshed model")
+
+    def loadMeshIntoSlicer(self, vtk_file_path):
+        # Read the VTK file
+        reader = vtk.vtkUnstructuredGridReader()
+        reader.SetFileName(vtk_file_path)
+        reader.Update()
+
+         # Create a new model node for the mesh
+        outputMeshNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+        outputMeshNode.SetName("GMSH_Output")
+
+        # Set the mesh data
+        outputMeshNode.SetAndObserveMesh(reader.GetOutput())
+
+        # Create and configure the display node
+        outputMeshNode.CreateDefaultDisplayNodes()
+        outputMeshDisplayNode = outputMeshNode.GetDisplayNode()
+        outputMeshDisplayNode.SetEdgeVisibility(True)
+        outputMeshDisplayNode.SetClipping(True)
+
+        # Set up color mapping
+        colorTableNode = slicer.util.getNode('GenericAnatomyColors')
+        if not colorTableNode:
+            colorTableNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLColorTableNode")
+            colorTableNode.SetTypeToGenericAnatomyColors()
+            slicer.util.saveNode(colorTableNode, os.path.join(slicer.app.temporaryPath, "GenericAnatomyColors.ctbl"))
+        outputMeshDisplayNode.SetAndObserveColorNodeID(colorTableNode.GetID())
+
+        # Set up clipping planes
+        sliceNodes = slicer.util.getNodesByClass('vtkMRMLSliceNode')
+        for sliceNode in sliceNodes:
+            clipNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLClipModelsNode")
+            if not clipNode:
+                clipNode = slicer.vtkMRMLClipModelsNode()
+                slicer.mrmlScene.AddNode(clipNode)
+            
+            if sliceNode.GetName() == 'Red':
+                clipNode.SetRedSliceClipState(clipNode.ClipNegativeSpace)
+            elif sliceNode.GetName() == 'Green':
+                clipNode.SetGreenSliceClipState(clipNode.ClipNegativeSpace)
+            elif sliceNode.GetName() == 'Yellow':
+                clipNode.SetYellowSliceClipState(clipNode.ClipNegativeSpace)
+
+        # Configure scalar visibility and attributes
+        outputMeshDisplayNode.ScalarVisibilityOn()
+        
+        # Check if 'labels' exists in the mesh data, otherwise use the first available array
+        pointData = reader.GetOutput().GetPointData()
+        cellData = reader.GetOutput().GetCellData()
+        if cellData.HasArray('labels'):
+            outputMeshDisplayNode.SetActiveScalarName('labels')
+            outputMeshDisplayNode.SetActiveAttributeLocation(vtk.vtkAssignAttribute.CELL_DATA)
+        elif pointData.HasArray('labels'):
+            outputMeshDisplayNode.SetActiveScalarName('labels')
+            outputMeshDisplayNode.SetActiveAttributeLocation(vtk.vtkAssignAttribute.POINT_DATA)
+        elif cellData.GetNumberOfArrays() > 0:
+            outputMeshDisplayNode.SetActiveScalarName(cellData.GetArrayName(0))
+            outputMeshDisplayNode.SetActiveAttributeLocation(vtk.vtkAssignAttribute.CELL_DATA)
+        elif pointData.GetNumberOfArrays() > 0:
+            outputMeshDisplayNode.SetActiveScalarName(pointData.GetArrayName(0))
+            outputMeshDisplayNode.SetActiveAttributeLocation(vtk.vtkAssignAttribute.POINT_DATA)
+        else:
+            print("No scalar data found in the mesh")
+            outputMeshDisplayNode.ScalarVisibilityOff()
+
+        outputMeshDisplayNode.SetVisibility2D(True)
+        outputMeshDisplayNode.SetSliceIntersectionOpacity(0.5)
+        outputMeshDisplayNode.SetScalarRangeFlag(slicer.vtkMRMLDisplayNode.UseColorNodeScalarRange)
+
+        self.outputMeshNode = outputMeshNode
+
+        return outputMeshNode
 
         # print(f"VTK file created: {tempVtkPath}")
         # print(f"VTK file size: {os.path.getsize(tempVtkPath)} bytes")
